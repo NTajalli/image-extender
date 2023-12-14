@@ -3,6 +3,7 @@ import cv2
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.distributed as dist
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from torchvision.utils import save_image
@@ -290,6 +291,14 @@ def generate_test_image(generator, device, latent_dim=100):
         generated_img = generator(z).cpu()
     return generated_img
 
+def setup(rank, world_size):
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
+    dist.init_process_group("nccl", rank=rank, world_size=world_size)
+
+def cleanup():
+    dist.destroy_process_group()
+
 # Load dataset for training with updated transformations
 transform = transforms.Compose([
     transforms.ToTensor(),
@@ -302,8 +311,13 @@ train_dataloader = DataLoader(train_dataset, batch_size=6, shuffle=True)
 
 # Initialize generator and discriminator
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-generator = Generator().to(device)
-discriminator = Discriminator().to(device)
+if torch.cuda.is_available():
+    torch.cuda.set_device(rank)
+    generator = Generator().to(device)
+    generator = nn.parallel.DistributedDataParallel(generator, device_ids=[rank])
+    discriminator = Discriminator().to(device)
+    discriminator = nn.parallel.DistributedDataParallel(discriminator, device_ids=[rank])
+
 
 # Start training
 train_gan(generator, discriminator, train_dataloader, epochs=200, device=device)
