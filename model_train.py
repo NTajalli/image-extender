@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.distributed as dist
+
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from torchvision.utils import save_image
@@ -11,9 +12,6 @@ from PIL import Image
 import matplotlib.pyplot as plt
 from torchvision.models import vgg19, VGG19_Weights
 from torch.nn import functional as F
-
-rank = int(os.environ['RANK'])
-world_size = int(os.environ['WORLD_SIZE'])
 
 # Function to load images from a folder
 def load_images_from_folder(folder, target_size=(256, 256)):
@@ -229,7 +227,6 @@ def generate_zoomed_images(image, zoom_factor=1.5, num_zooms=1):
 
 # Training Loop with Model Checkpointing and Enhanced Visualization
 def train_gan(generator, discriminator, dataloader, epochs, device):
-    setup()
     adversarial_loss = nn.BCELoss()
     perceptual_loss_criterion = VGGPerceptualLoss().to(device)
     l1_loss_criterion = nn.L1Loss()
@@ -286,7 +283,7 @@ def train_gan(generator, discriminator, dataloader, epochs, device):
             if i % some_frequency == 0:
                 save_image(real_images_resized.data, os.path.join(output_dir, f"epoch_{epoch}_batch_{i}_real.png"), nrow=5, normalize=True)
                 save_image(gen_images.data, os.path.join(output_dir, f"epoch_{epoch}_batch_{i}_generated.png"), nrow=5, normalize=True)
-    cleanup()
+
                 
         
 def generate_test_image(generator, device, latent_dim=100):
@@ -294,13 +291,6 @@ def generate_test_image(generator, device, latent_dim=100):
     with torch.no_grad():
         generated_img = generator(z).cpu()
     return generated_img
-
-def setup():
-    # Initialize the process group
-    dist.init_process_group("nccl", rank=rank, world_size=world_size)
-
-def cleanup():
-    dist.destroy_process_group()
 
 # Load dataset for training with updated transformations
 transform = transforms.Compose([
@@ -314,13 +304,8 @@ train_dataloader = DataLoader(train_dataset, batch_size=6, shuffle=True)
 
 # Initialize generator and discriminator
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-if torch.cuda.is_available():
-    torch.cuda.set_device(rank)
-    generator = Generator().to(device)
-    generator = nn.parallel.DistributedDataParallel(generator, device_ids=[rank])
-    discriminator = Discriminator().to(device)
-    discriminator = nn.parallel.DistributedDataParallel(discriminator, device_ids=[rank])
-
+generator = Generator().to(device)
+discriminator = Discriminator().to(device)
 
 # Start training
 train_gan(generator, discriminator, train_dataloader, epochs=200, device=device)
