@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.distributed as dist
-
+from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from torchvision.utils import save_image
@@ -234,56 +234,42 @@ def train_gan(generator, discriminator, dataloader, epochs, device):
     optimizer_G = torch.optim.Adam(generator.parameters(), lr=0.0002, betas=(0.5, 0.999))
     optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=0.0002, betas=(0.5, 0.999))
     output_dir = './gan_output_images'
-    some_frequency = 6
+    scaler = GradScaler()  # Initialize gradient scaler for mixed precision
+    some_frequency = 1
 
     for epoch in range(epochs):
         for i, (real_images, zoomed_images) in enumerate(dataloader):
             real_images, zoomed_images = real_images.to(device), zoomed_images.to(device)
             batch_size = real_images.size(0)
-
-            # Resize real images to 512x512 for discriminator
             real_images_resized = F.interpolate(real_images, size=(512, 512), mode='bilinear', align_corners=False)
 
-            # Generate fake images
-            z = torch.randn(batch_size, 100, device=device)
-            gen_images = generator(z, real_images_resized)
-
-            # ---------------------
-            #  Train Discriminator
-            # ---------------------
+            # Forward pass for discriminator
             optimizer_D.zero_grad()
+            with autocast():
+                gen_images = generator(torch.randn(batch_size, 100, device=device), real_images_resized)
+                real_loss = adversarial_loss(discriminator(real_images_resized, real_images_resized), torch.ones(batch_size, 1, device=device))
+                fake_loss = adversarial_loss(discriminator(gen_images.detach(), real_images_resized), torch.zeros(batch_size, 1, device=device))
+                d_loss = (real_loss + fake_loss) / 2
+            scaler.scale(d_loss).backward()
+            scaler.step(optimizer_D)
 
-            valid = torch.ones(batch_size, 1, device=device, requires_grad=False)
-            fake = torch.zeros(batch_size, 1, device=device, requires_grad=False)
-
-            real_loss = adversarial_loss(discriminator(real_images_resized, real_images_resized), valid)
-            fake_loss = adversarial_loss(discriminator(gen_images.detach(), real_images_resized), fake)
-            d_loss = (real_loss + fake_loss) / 2
-            d_loss.backward()
-            optimizer_D.step()
-
-            # -----------------
-            #  Train Generator
-            # -----------------
+            # Forward pass for generator
             optimizer_G.zero_grad()
+            with autocast():
+                g_loss_adv = adversarial_loss(discriminator(gen_images, real_images_resized), torch.ones(batch_size, 1, device=device))
+                g_loss_l1 = l1_loss_criterion(gen_images, real_images_resized)
+                g_loss_perc = perceptual_loss_criterion(gen_images, real_images_resized)
+                g_loss_total = g_loss_adv + 0.1 * g_loss_l1 + 0.01 * g_loss_perc
+            scaler.scale(g_loss_total).backward()
+            scaler.step(optimizer_G)
 
-            # Adjust loss functions for the new image size
-            g_loss_adv = adversarial_loss(discriminator(gen_images, real_images_resized), valid)
-            g_loss_l1 = l1_loss_criterion(gen_images, real_images_resized)
-            g_loss_perc = perceptual_loss_criterion(gen_images, real_images_resized)
-            g_loss_total = g_loss_adv + 0.1 * g_loss_l1 + 0.01 * g_loss_perc
-            g_loss_total.backward()
-            optimizer_G.step()
+            scaler.update()  # Update scaler
 
-            # Print/log information
+            # Logging and saving images
             if i % some_frequency == 0:
                 print(f"[Epoch {epoch}/{epochs}] [Batch {i}/{len(dataloader)}] [D loss: {d_loss.item()}] [G loss: {g_loss_total.item()}]")
-
-            # Save images
-            if i % some_frequency == 0:
                 save_image(real_images_resized.data, os.path.join(output_dir, f"epoch_{epoch}_batch_{i}_real.png"), nrow=5, normalize=True)
                 save_image(gen_images.data, os.path.join(output_dir, f"epoch_{epoch}_batch_{i}_generated.png"), nrow=5, normalize=True)
-
                 
         
 def generate_test_image(generator, device, latent_dim=100):
@@ -300,7 +286,7 @@ transform = transforms.Compose([
 ])
 
 train_dataset = GANDataset(folder_path='./test_images', target_size=(512, 512), transform=transform)
-train_dataloader = DataLoader(train_dataset, batch_size=6, shuffle=True)
+train_dataloader = DataLoader(train_dataset, batch_size=6, shuffle=True, num_workers=4)
 
 # Initialize generator and discriminator
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
