@@ -3,8 +3,6 @@ import cv2
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.distributed as dist
-from torch.cuda.amp import GradScaler, autocast
 from torch.utils.data import DataLoader, Dataset
 from torchvision import transforms
 from torchvision.utils import save_image
@@ -75,7 +73,7 @@ class SelfAttention(nn.Module):
 class Generator(nn.Module):
     def __init__(self):
         super(Generator, self).__init__()
-        self.init_size = 8  # Initial size of features
+        self.init_size = 8  # Adjust if necessary
 
         # Network to process the input image
         self.input_img_processor = nn.Sequential(
@@ -99,21 +97,10 @@ class Generator(nn.Module):
             nn.Conv2d(256, 128, 3, stride=1, padding=1),
             nn.BatchNorm2d(128),
             nn.ReLU(True),
-            nn.Upsample(scale_factor=2),  # Upsample to 16x16
-            nn.Conv2d(128, 128, 3, stride=1, padding=1),
-            nn.BatchNorm2d(128),
-            nn.ReLU(True),
-            nn.Upsample(scale_factor=2),  # Upsample to 32x32
+            # Additional upsampling layers here
             nn.Conv2d(128, 64, 3, stride=1, padding=1),
             nn.BatchNorm2d(64),
             nn.ReLU(True),
-            nn.Upsample(scale_factor=2),  # Upsample to 64x64
-            nn.Upsample(scale_factor=2),  # Upsample to 128x128
-            nn.Conv2d(64, 64, 3, stride=1, padding=1),
-            nn.BatchNorm2d(64),
-            nn.ReLU(True),
-            nn.Upsample(scale_factor=2),  # Upsample to 256x256
-            nn.Upsample(scale_factor=2),  # Upsample to 512x512
             nn.Conv2d(64, 3, 3, stride=1, padding=1),
             nn.Tanh()  # Output layer
         )
@@ -140,58 +127,38 @@ class Generator(nn.Module):
 class Discriminator(nn.Module):
     def __init__(self):
         super(Discriminator, self).__init__()
-        # Note: The number of input channels is 6 because we concatenate the generated image and the resized original image.
         self.model = nn.Sequential(
-            nn.Conv2d(6, 64, 4, stride=2, padding=1),  # Input: 512x512, Output: 256x256
+            nn.Conv2d(6, 64, 4, stride=2, padding=1),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Dropout2d(0.25),
 
-            nn.Conv2d(64, 128, 4, stride=2, padding=1),  # Input: 256x256, Output: 128x128
-            nn.BatchNorm2d(128),
+            nn.Conv2d(64, 128, 4, stride=2, padding=1),
+            nn.BatchNorm2d(128, 0.8),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Dropout2d(0.25),
 
-            nn.Conv2d(128, 256, 4, stride=2, padding=1),  # Input: 128x128, Output: 64x64
-            nn.BatchNorm2d(256),
+            nn.Conv2d(128, 256, 4, stride=2, padding=1),
+            nn.BatchNorm2d(256, 0.8),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Dropout2d(0.25),
 
-            nn.Conv2d(256, 512, 4, stride=2, padding=1),  # Input: 64x64, Output: 32x32
-            nn.BatchNorm2d(512),
+            nn.Conv2d(256, 512, 4, stride=2, padding=1),
+            nn.BatchNorm2d(512, 0.8),
             nn.LeakyReLU(0.2, inplace=True),
             nn.Dropout2d(0.25),
 
-            nn.Conv2d(512, 1024, 4, stride=2, padding=1),  # Input: 32x32, Output: 16x16
-            nn.BatchNorm2d(1024),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Dropout2d(0.25),
-
-            nn.Conv2d(1024, 2048, 4, stride=2, padding=1),  # Input: 16x16, Output: 8x8
-            nn.BatchNorm2d(2048),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Dropout2d(0.25),
-
-            nn.Conv2d(2048, 4096, 4, stride=2, padding=1),  # Input: 8x8, Output: 4x4
-            nn.BatchNorm2d(4096),
-            nn.LeakyReLU(0.2, inplace=True),
-            nn.Dropout2d(0.25),
-
-            nn.Conv2d(4096, 1, 4, stride=1, padding=0),  # Input: 4x4, Output: 1x1
+            nn.Conv2d(512, 1, 4, stride=1, padding=0),
             nn.AdaptiveAvgPool2d(1),
             nn.Sigmoid()
         )
 
     def forward(self, gen_img, input_img):
-        # Resize input_img to match the size of gen_img (512x512)
-        input_img_resized = F.interpolate(input_img, size=(512, 512), mode='bilinear', align_corners=False)
+        # Resize gen_img to match the size of input_img
+        gen_img = F.interpolate(gen_img, size=(input_img.size(2), input_img.size(3)), mode='bilinear', align_corners=False)
 
-        # Concatenate the generated image and the resized input image
-        combined_img = torch.cat([gen_img, input_img_resized], 1)
-
-        # Pass the combined image through the discriminator model
+        combined_img = torch.cat([gen_img, input_img], 1)
         validity = self.model(combined_img)
         return validity.view(-1, 1)
-
 
 
 class VGGPerceptualLoss(nn.Module):
@@ -230,54 +197,56 @@ def train_gan(generator, discriminator, dataloader, epochs, device):
     adversarial_loss = nn.BCELoss()
     perceptual_loss_criterion = VGGPerceptualLoss().to(device)
     l1_loss_criterion = nn.L1Loss()
-    scaler = GradScaler()  # Initialize gradient scaler for mixed precision
 
     optimizer_G = torch.optim.Adam(generator.parameters(), lr=0.0002, betas=(0.5, 0.999))
     optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=0.0002, betas=(0.5, 0.999))
     output_dir = './gan_output_images'
-    some_frequency = 1
+    some_frequency = 6
 
     for epoch in range(epochs):
         for i, (real_images, zoomed_images) in enumerate(dataloader):
             real_images, zoomed_images = real_images.to(device), zoomed_images.to(device)
             batch_size = real_images.size(0)
-            real_images_resized = F.interpolate(real_images, size=(512, 512), mode='bilinear', align_corners=False)
 
-            # Memory usage before forward pass
-            print(f"Memory before forward pass: Allocated: {torch.cuda.memory_allocated(device)/1e9} GB, Reserved: {torch.cuda.memory_reserved(device)/1e9} GB")
+            # Generate fake images
+            z = torch.randn(batch_size, 100, device=device)
+            gen_images = generator(z, real_images)
 
-            # Forward pass for discriminator
+            # ---------------------
+            #  Train Discriminator
+            # ---------------------
             optimizer_D.zero_grad()
-            with autocast():
-                gen_images = generator(torch.randn(batch_size, 100, device=device), real_images_resized)
-                real_loss = adversarial_loss(discriminator(real_images_resized, real_images_resized), torch.ones(batch_size, 1, device=device))
-                fake_loss = adversarial_loss(discriminator(gen_images.detach(), real_images_resized), torch.zeros(batch_size, 1, device=device))
-                d_loss = (real_loss + fake_loss) / 2
-            scaler.scale(d_loss).backward()
-            scaler.step(optimizer_D)
 
-            # Memory usage after discriminator backward
-            print(f"Memory after discriminator backward: Allocated: {torch.cuda.memory_allocated(device)/1e9} GB, Reserved: {torch.cuda.memory_reserved(device)/1e9} GB")
+            valid = torch.ones(batch_size, device=device, requires_grad=False)
+            fake = torch.zeros(batch_size, device=device, requires_grad=False)
 
-            # Forward pass for generator
+            real_loss = adversarial_loss(discriminator(real_images, real_images).view(-1), valid)
+            fake_loss = adversarial_loss(discriminator(gen_images.detach(), real_images).view(-1), fake)
+
+            d_loss = (real_loss + fake_loss) / 2
+            d_loss.backward()
+            optimizer_D.step()
+
+            # -----------------
+            #  Train Generator
+            # -----------------
             optimizer_G.zero_grad()
-            with autocast():
-                g_loss_adv = adversarial_loss(discriminator(gen_images, real_images_resized), torch.ones(batch_size, 1, device=device))
-                g_loss_l1 = l1_loss_criterion(gen_images, real_images_resized)
-                g_loss_perc = perceptual_loss_criterion(gen_images, real_images_resized)
-                g_loss_total = g_loss_adv + 0.1 * g_loss_l1 + 0.01 * g_loss_perc
-            scaler.scale(g_loss_total).backward()
-            scaler.step(optimizer_G)
 
-            # Memory usage after generator backward
-            print(f"Memory after generator backward: Allocated: {torch.cuda.memory_allocated(device)/1e9} GB, Reserved: {torch.cuda.memory_reserved(device)/1e9} GB")
+            g_loss_adv = adversarial_loss(discriminator(gen_images, real_images).view(-1), valid)
+            resized_gen_images = F.interpolate(gen_images, size=(zoomed_images.size(2), zoomed_images.size(3)), mode='bilinear', align_corners=False)
+            g_loss_l1 = l1_loss_criterion(resized_gen_images, zoomed_images)
+            g_loss_perc = perceptual_loss_criterion(resized_gen_images, zoomed_images)
+            g_loss_total = g_loss_adv + 0.1 * g_loss_l1 + 0.01 * g_loss_perc
+            g_loss_total.backward()
+            optimizer_G.step()
 
-            scaler.update()  # Update scaler
-
-            # Logging and saving images
+            # Print/log information
             if i % some_frequency == 0:
                 print(f"[Epoch {epoch}/{epochs}] [Batch {i}/{len(dataloader)}] [D loss: {d_loss.item()}] [G loss: {g_loss_total.item()}]")
-                save_image(real_images_resized.data, os.path.join(output_dir, f"epoch_{epoch}_batch_{i}_real.png"), nrow=5, normalize=True)
+
+            # Save images
+            if i % some_frequency == 0:
+                save_image(zoomed_images.data, os.path.join(output_dir, f"epoch_{epoch}_batch_{i}_real.png"), nrow=5, normalize=True)
                 save_image(gen_images.data, os.path.join(output_dir, f"epoch_{epoch}_batch_{i}_generated.png"), nrow=5, normalize=True)
                 
         
@@ -294,8 +263,8 @@ transform = transforms.Compose([
     transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 ])
 
-train_dataset = GANDataset(folder_path='./test_images', target_size=(512, 512), transform=transform)
-train_dataloader = DataLoader(train_dataset, batch_size=6, shuffle=True, num_workers=4)
+train_dataset = GANDataset(folder_path='./test_images', target_size=(256, 256), transform=transform)
+train_dataloader = DataLoader(train_dataset, batch_size=6, shuffle=True)
 
 # Initialize generator and discriminator
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -311,5 +280,3 @@ generated_img = generate_test_image(generator, device)
 # Convert generated image for visualization
 generated_img = generated_img.squeeze(0).permute(1, 2, 0)
 generated_img = (generated_img * 0.5 + 0.5).numpy()
-
-
