@@ -17,9 +17,33 @@ def load_images_from_folder(folder, target_size=(256, 256)):
     for filename in os.listdir(folder):
         img = cv2.imread(os.path.join(folder, filename))
         if img is not None:
-            img = cv2.resize(img, target_size)
+            img = resize_and_maintain_aspect_ratio(img)
             images.append(img)
     return images
+
+def resize_and_maintain_aspect_ratio(img, target_size=(256, 256)):
+    # Calculate the ratio of the target dimensions
+    height_ratio, width_ratio = target_size[0] / img.shape[0], target_size[1] / img.shape[1]
+    new_ratio = min(height_ratio, width_ratio)
+
+    # Calculate new dimensions
+    new_height, new_width = int(img.shape[0] * new_ratio), int(img.shape[1] * new_ratio)
+
+    # Resize the image
+    resized_img = cv2.resize(img, (new_width, new_height), interpolation=cv2.INTER_AREA)
+
+    # Create a new image with target dimensions
+    final_img = np.zeros((target_size[0], target_size[1], 3), dtype=np.uint8)
+
+    # Calculate top-left corner position for the resized image on the new canvas
+    top_left_y = (target_size[0] - resized_img.shape[0]) // 2
+    top_left_x = (target_size[1] - resized_img.shape[1]) // 2
+
+    # Place the resized image on the new canvas
+    final_img[top_left_y:top_left_y + resized_img.shape[0], top_left_x:top_left_x + resized_img.shape[1]] = resized_img
+
+    return final_img
+
 
 # Custom Dataset Class with Augmentation
 class GANDataset(Dataset):
@@ -175,7 +199,7 @@ class VGGPerceptualLoss(nn.Module):
         perceptual_loss = F.mse_loss(vgg_gen, vgg_real)
         return perceptual_loss
 
-def generate_zoomed_images(image, zoom_factor=1.5, num_zooms=1):
+def generate_zoomed_images(image, zoom_factor=2, num_zooms=1):
     height, width, _ = image.shape
     zoomed_images = []
 
