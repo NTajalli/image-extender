@@ -230,11 +230,11 @@ def train_gan(generator, discriminator, dataloader, epochs, device):
     adversarial_loss = nn.BCELoss()
     perceptual_loss_criterion = VGGPerceptualLoss().to(device)
     l1_loss_criterion = nn.L1Loss()
+    scaler = GradScaler()  # Initialize gradient scaler for mixed precision
 
     optimizer_G = torch.optim.Adam(generator.parameters(), lr=0.0002, betas=(0.5, 0.999))
     optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=0.0002, betas=(0.5, 0.999))
     output_dir = './gan_output_images'
-    scaler = GradScaler()  # Initialize gradient scaler for mixed precision
     some_frequency = 1
 
     for epoch in range(epochs):
@@ -242,6 +242,9 @@ def train_gan(generator, discriminator, dataloader, epochs, device):
             real_images, zoomed_images = real_images.to(device), zoomed_images.to(device)
             batch_size = real_images.size(0)
             real_images_resized = F.interpolate(real_images, size=(512, 512), mode='bilinear', align_corners=False)
+
+            # Memory usage before forward pass
+            print(f"Memory before forward pass: Allocated: {torch.cuda.memory_allocated(device)/1e9} GB, Reserved: {torch.cuda.memory_reserved(device)/1e9} GB")
 
             # Forward pass for discriminator
             optimizer_D.zero_grad()
@@ -253,6 +256,9 @@ def train_gan(generator, discriminator, dataloader, epochs, device):
             scaler.scale(d_loss).backward()
             scaler.step(optimizer_D)
 
+            # Memory usage after discriminator backward
+            print(f"Memory after discriminator backward: Allocated: {torch.cuda.memory_allocated(device)/1e9} GB, Reserved: {torch.cuda.memory_reserved(device)/1e9} GB")
+
             # Forward pass for generator
             optimizer_G.zero_grad()
             with autocast():
@@ -262,6 +268,9 @@ def train_gan(generator, discriminator, dataloader, epochs, device):
                 g_loss_total = g_loss_adv + 0.1 * g_loss_l1 + 0.01 * g_loss_perc
             scaler.scale(g_loss_total).backward()
             scaler.step(optimizer_G)
+
+            # Memory usage after generator backward
+            print(f"Memory after generator backward: Allocated: {torch.cuda.memory_allocated(device)/1e9} GB, Reserved: {torch.cuda.memory_reserved(device)/1e9} GB")
 
             scaler.update()  # Update scaler
 
