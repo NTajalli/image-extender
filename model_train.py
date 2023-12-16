@@ -222,8 +222,8 @@ def train_gan(generator, discriminator, dataloader, epochs, device):
     perceptual_loss_criterion = VGGPerceptualLoss().to(device)
     l1_loss_criterion = nn.L1Loss()
 
-    optimizer_G = torch.optim.Adam(generator.parameters(), lr=0.0004, betas=(0.5, 0.999))
-    optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=0.0001, betas=(0.5, 0.999))
+    optimizer_G = torch.optim.Adam(generator.parameters(), lr=0.0005, betas=(0.5, 0.999))
+    optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=0.00005, betas=(0.5, 0.999))
     output_dir = './gan_output_images'
     some_frequency = 30
     checkpoint_dir = './model_checkpoints'  # Directory to save model checkpoints
