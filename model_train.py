@@ -226,6 +226,9 @@ def train_gan(generator, discriminator, dataloader, epochs, device):
     optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=0.0001, betas=(0.5, 0.999))
     output_dir = './gan_output_images'
     some_frequency = 30
+    checkpoint_dir = './model_checkpoints'  # Directory to save model checkpoints
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
 
     for epoch in range(epochs):
         for i, (real_images, zoomed_images) in enumerate(dataloader):
@@ -272,7 +275,9 @@ def train_gan(generator, discriminator, dataloader, epochs, device):
             if i % some_frequency == 0 and i != 0 and epoch % 5 == 0:
                 save_image(zoomed_images.data, os.path.join(output_dir, f"epoch_{epoch}_batch_{i}_real.png"), nrow=5, normalize=True)
                 save_image(gen_images.data, os.path.join(output_dir, f"epoch_{epoch}_batch_{i}_generated.png"), nrow=5, normalize=True)
-                
+            
+        torch.save(generator.state_dict(), os.path.join(checkpoint_dir, f'generator_epoch_{epoch}.pth'))
+        torch.save(discriminator.state_dict(), os.path.join(checkpoint_dir, f'discriminator_epoch_{epoch}.pth'))    
         
 def generate_test_image(generator, device, latent_dim=100):
     z = torch.randn(1, latent_dim).to(device)
@@ -286,6 +291,34 @@ transform = transforms.Compose([
     transforms.ColorJitter(brightness=0.2, contrast=0.2),
     transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 ])
+
+def process_and_save_image(image_path, generator, device, save_path='generated_image.jpg'):
+    # Load and preprocess the image
+    img = Image.open(image_path).convert('RGB')
+    transform = transforms.Compose([
+        transforms.Resize((256, 256)),
+        transforms.ToTensor(),
+        transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+    ])
+    img = transform(img).unsqueeze(0).to(device)
+
+    # Generate a random noise vector
+    z = torch.randn(1, 100, device=device)
+
+    # Generate the image
+    with torch.no_grad():
+        generated_img = generator(z, img).cpu()
+
+    # Convert to PIL Image and save
+    generated_img = generated_img.squeeze(0).permute(1, 2, 0)
+    generated_img = (generated_img * 0.5 + 0.5).numpy()
+    generated_img = (generated_img * 255).astype(np.uint8)
+    generated_img = Image.fromarray(generated_img)
+    generated_img.save(save_path)
+
+# Example usage
+# process_and_save_image('path_to_your_input_image.jpg', generator, device, 'output_image.jpg')
+
 
 train_dataset = GANDataset(folder_path='./downloaded_images', target_size=(256, 256), transform=transform)
 train_dataloader = DataLoader(train_dataset, batch_size=32, shuffle=True)
