@@ -225,7 +225,7 @@ def train_gan(generator, discriminator, dataloader, epochs, device):
     optimizer_G = torch.optim.Adam(generator.parameters(), lr=0.0002, betas=(0.5, 0.999))
     optimizer_D = torch.optim.Adam(discriminator.parameters(), lr=0.0002, betas=(0.5, 0.999))
     output_dir = './gan_output_images'
-    some_frequency = 6
+    some_frequency = 30
 
     for epoch in range(epochs):
         for i, (real_images, zoomed_images) in enumerate(dataloader):
@@ -269,7 +269,7 @@ def train_gan(generator, discriminator, dataloader, epochs, device):
                 print(f"[Epoch {epoch}/{epochs}] [Batch {i}/{len(dataloader)}] [D loss: {d_loss.item()}] [G loss: {g_loss_total.item()}]")
 
             # Save images
-            if i % some_frequency == 0:
+            if i % some_frequency == 0 and i != 0 and epoch % 5 == 0:
                 save_image(zoomed_images.data, os.path.join(output_dir, f"epoch_{epoch}_batch_{i}_real.png"), nrow=5, normalize=True)
                 save_image(gen_images.data, os.path.join(output_dir, f"epoch_{epoch}_batch_{i}_generated.png"), nrow=5, normalize=True)
                 
@@ -287,8 +287,8 @@ transform = transforms.Compose([
     transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 ])
 
-train_dataset = GANDataset(folder_path='./test_images', target_size=(256, 256), transform=transform)
-train_dataloader = DataLoader(train_dataset, batch_size=6, shuffle=True)
+train_dataset = GANDataset(folder_path='./downloaded_images', target_size=(256, 256), transform=transform)
+train_dataloader = DataLoader(train_dataset, batch_size=32, shuffle=True)
 
 # Initialize generator and discriminator
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
