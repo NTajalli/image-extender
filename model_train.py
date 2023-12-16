@@ -288,7 +288,6 @@ def generate_test_image(generator, device, latent_dim=100):
 # Load dataset for training with updated transformations
 transform = transforms.Compose([
     transforms.ToTensor(),
-    transforms.ColorJitter(brightness=0.2, contrast=0.2),
     transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
 ])
 
